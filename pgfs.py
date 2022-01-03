@@ -8,9 +8,9 @@ import os
 import fcntl
 import errno
 import shutil
+import argparse
 
 # TODO: Support tablespaces
-# TODO: Support "dry run"
 
 class Database:
     def __init__(self, oid, name):
@@ -30,7 +30,7 @@ class Table:
         self.relfilenode = relfilenode
 
 def usage():
-    print("USAGE: pgfs.py <destroot>")
+    print("USAGE: pgfs.py [options] <destroot>")
     sys.exit(1)
 
 def get_data_dir(conn):
@@ -71,13 +71,14 @@ def print_tree(databases):
             for t in sch.tables:
                 print("    %s" % t.name)
 
-def build_tree(destroot):
+def build_tree(args):
     conn = psycopg2.connect()       # Just use normal libpq envvars: PGPORT, PGDATABASE, etc.
     pgroot = get_data_dir(conn)
     # print(pgroot)
     databases = get_contents(conn)
-    # print_tree(databases)
-    write_tree(pgroot, destroot, databases)
+    if args.print_tree:
+        print_tree(databases)
+    write_tree(args, pgroot, args.destroot, databases)
 
 def same_inode(f1, f2):
     return os.stat(f1).st_ino == os.stat(f2).st_ino
@@ -158,7 +159,7 @@ def unlock_file(f):
     # TODO: Support Windows too
     fcntl.lockf(f, fcntl.LOCK_UN)
 
-def write_tree(pgroot, destroot, databases):
+def write_tree(args, pgroot, destroot, databases):
     # If destroot doesn't exist, create it.
     # If it exists and is empty, populate it.
     # If it exists and is not empty, then only proceed if it has a .pgfs file at the top-level. Otherwise warn & die.
@@ -178,15 +179,18 @@ def write_tree(pgroot, destroot, databases):
 
     f = lock_file(dot_pgfs)
     try:
-        _write_tree(pgroot, destroot, databases)
+        if not args.dry_run:
+            _write_tree(pgroot, destroot, databases)
     finally:
         unlock_file(f)
 
 def main(argv):
-    if len(argv) != 2:
-        usage()
-    destroot = argv[1]
-    build_tree(destroot)
+    parser = argparse.ArgumentParser(description="Mirror Postgres cluster to named files")
+    parser.add_argument("destroot", help="The directory to put the tree in. Should be empty or the result of a previous run.")
+    parser.add_argument("-p", "--print", dest="print_tree", action="store_true", help="Print cluster structure to stdout")
+    parser.add_argument("-d", "--dry-run", dest="dry_run", action="store_true", help="Don't actually make any changes")
+    args = parser.parse_args()
+    build_tree(args)
 
 if __name__ == '__main__':
     main(sys.argv)
